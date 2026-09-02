@@ -3,7 +3,7 @@ import sqlite3, hashlib, secrets, shutil, csv
 from datetime import datetime, date
 from pathlib import Path
 import tkinter as tk
-from tkinter import ttk, messagebox, simpledialog, filedialog
+from tkinter import ttk, messagebox, filedialog
 
 APP_NAME = "PartyChat Accounting V2"
 BASE = Path.home() / "PartyChat Accounting"
@@ -14,6 +14,7 @@ PBKDF2_ITERS = 200_000
 BASE.mkdir(exist_ok=True); BACKUPS.mkdir(exist_ok=True); EXPORTS.mkdir(exist_ok=True)
 
 def now(): return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
 def connect():
     c = sqlite3.connect(DB)
     c.row_factory = sqlite3.Row
@@ -64,53 +65,131 @@ class App(tk.Tk):
         self.title(APP_NAME)
         self.geometry('1180x760')
         self.minsize(980, 650)
-        self.selected_party = None
-        self.selected_project = None
         self.protocol('WM_DELETE_WINDOW', self.destroy)
+        
+        # Consistent styling for dark and light modes
         self.style = ttk.Style(self)
         try:
-            self.style.theme_use('aqua')
+            self.style.theme_use('clam')
         except:
             pass
-        self.build()
+        self.style.configure('TEntry', fieldbackground='white', foreground='black')
+        self.style.configure('TCombobox', fieldbackground='white', foreground='black')
 
+        self.selected_party = None
+        self.selected_project = None
+
+        if not has_password():
+            self.show_setup_password()
+        else:
+            self.show_login()
+
+    def clear_screen(self):
+        for widget in self.winfo_children():
+            widget.destroy()
+
+    # --- Authentication Views ---
+    def show_setup_password(self):
+        self.clear_screen()
+        frame = ttk.Frame(self, padding=30)
+        frame.place(relx=0.5, rely=0.5, anchor='center')
+
+        ttk.Label(frame, text='Create Master Password', font=('TkDefaultFont', 16, 'bold')).pack(pady=(0, 15))
+        ttk.Label(frame, text='Set a password to secure your accounting data:').pack(pady=(0, 10))
+
+        ttk.Label(frame, text='New Password:').pack(anchor='w')
+        p1 = ttk.Entry(frame, show='*', width=30)
+        p1.pack(pady=(0, 10))
+        p1.focus()
+
+        ttk.Label(frame, text='Confirm Password:').pack(anchor='w')
+        p2 = ttk.Entry(frame, show='*', width=30)
+        p2.pack(pady=(0, 15))
+
+        def on_submit():
+            v1, v2 = p1.get(), p2.get()
+            if not v1.strip():
+                messagebox.showwarning('Required', 'Password cannot be blank.', parent=self)
+                return
+            if v1 != v2:
+                messagebox.showerror('Mismatch', 'Passwords do not match.', parent=self)
+                return
+            set_password(v1)
+            self.build()
+
+        ttk.Button(frame, text='Save & Open App', command=on_submit).pack(fill='x')
+        self.bind('<Return>', lambda _: on_submit())
+
+    def show_login(self):
+        self.clear_screen()
+        frame = ttk.Frame(self, padding=30)
+        frame.place(relx=0.5, rely=0.5, anchor='center')
+
+        ttk.Label(frame, text=APP_NAME, font=('TkDefaultFont', 18, 'bold')).pack(pady=(0, 5))
+        ttk.Label(frame, text='Enter password to continue:', foreground='#666').pack(pady=(0, 15))
+
+        pw_entry = ttk.Entry(frame, show='*', width=30)
+        pw_entry.pack(pady=(0, 15))
+        pw_entry.focus()
+
+        def attempt_login():
+            val = pw_entry.get()
+            if verify_password(val):
+                self.unbind('<Return>')
+                self.build()
+            else:
+                messagebox.showerror('Error', 'Incorrect password.', parent=self)
+                pw_entry.delete(0, 'end')
+
+        ttk.Button(frame, text='Log In', command=attempt_login).pack(fill='x')
+        self.bind('<Return>', lambda _: attempt_login())
+
+    # --- Main Application View ---
     def build(self):
+        self.clear_screen()
         top = ttk.Frame(self, padding=10)
         top.pack(fill='x')
         ttk.Label(top, text='PartyChat Accounting', font=('TkDefaultFont', 20, 'bold')).pack(side='left')
         ttk.Label(top, text='  V2 • Local & Private', foreground='#666').pack(side='left')
         for text, cmd in [('Backup', self.backup), ('Restore', self.restore), ('Export CSV', self.export_csv), ('Change Password', self.change_password)]:
             ttk.Button(top, text=text, command=cmd).pack(side='right', padx=3)
+
         pan = ttk.Panedwindow(self, orient='horizontal')
         pan.pack(fill='both', expand=True, padx=10, pady=(0, 10))
-        left = ttk.Frame(pan, width=300)
+
+        left = ttk.Frame(pan, width=320)
         right = ttk.Frame(pan)
         pan.add(left, weight=0)
         pan.add(right, weight=1)
         self.right = right
+
         nb = ttk.Notebook(left)
         nb.pack(fill='both', expand=True)
         pt = ttk.Frame(nb)
         pr = ttk.Frame(nb)
         nb.add(pt, text=' Parties ')
         nb.add(pr, text=' Projects ')
+
         self.party_search = tk.StringVar()
         sf = ttk.Frame(pt, padding=6)
         sf.pack(fill='x')
         ttk.Entry(sf, textvariable=self.party_search).pack(side='left', fill='x', expand=True)
         self.party_search.trace_add('write', lambda *_: self.refresh_parties())
         ttk.Button(sf, text='+', width=3, command=self.add_party).pack(side='right', padx=(5, 0))
+
         self.party_tree = ttk.Treeview(pt, show='tree', selectmode='browse')
         self.party_tree.pack(fill='both', expand=True, padx=6, pady=6)
         self.party_tree.bind('<<TreeviewSelect>>', self.party_selected)
         ttk.Button(pt, text='Edit selected', command=self.edit_party).pack(fill='x', padx=6, pady=3)
         ttk.Button(pt, text='Delete selected', command=self.delete_party).pack(fill='x', padx=6, pady=(0, 6))
+
         ttk.Button(pr, text='+ New Project', command=self.add_project).pack(fill='x', padx=6, pady=6)
         self.project_tree = ttk.Treeview(pr, show='tree', selectmode='browse')
         self.project_tree.pack(fill='both', expand=True, padx=6, pady=6)
         self.project_tree.bind('<<TreeviewSelect>>', self.project_selected)
         ttk.Button(pr, text='Manage Members', command=self.manage_members).pack(fill='x', padx=6, pady=3)
         ttk.Button(pr, text='Delete Project', command=self.delete_project).pack(fill='x', padx=6, pady=(0, 6))
+
         self.build_empty()
         self.refresh_all()
 
@@ -319,13 +398,28 @@ class App(tk.Tk):
         self.show_party(pid)
 
     def add_project(self):
-        name = simpledialog.askstring('New Project', 'Project name:', parent=self)
-        if name:
-            c = connect()
-            c.execute('INSERT INTO projects(name, created_at) VALUES(?,?)', (name.strip(), now()))
-            c.commit()
-            c.close()
-            self.refresh_all()
+        w = tk.Toplevel(self)
+        w.title('New Project')
+        w.transient(self)
+        w.grab_set()
+        f = ttk.Frame(w, padding=18)
+        f.pack(fill='both', expand=True)
+        ttk.Label(f, text='Project Name:').grid(row=0, column=0, sticky='w', pady=5)
+        name_var = tk.StringVar()
+        ttk.Entry(f, textvariable=name_var, width=30).grid(row=0, column=1, pady=5)
+        
+        def save():
+            name = name_var.get().strip()
+            if name:
+                c = connect()
+                c.execute('INSERT INTO projects(name, created_at) VALUES(?,?)', (name, now()))
+                c.commit()
+                c.close()
+                w.destroy()
+                self.refresh_all()
+
+        ttk.Button(f, text='Add', command=save).grid(row=1, column=1, sticky='e', pady=10)
+        w.wait_window()
 
     def show_project(self, pid):
         c = connect()
@@ -422,58 +516,43 @@ class App(tk.Tk):
         messagebox.showinfo('Export complete', f'CSV files saved to:\n{folder}')
 
     def change_password(self):
-        old = simpledialog.askstring('Change Password', 'Current password:', show='*', parent=self)
-        if old is None:
-            return
-        if not verify_password(old):
-            messagebox.showerror('Error', 'Current password is incorrect.')
-            return
-        new = simpledialog.askstring('Change Password', 'New password:', show='*', parent=self)
-        if not new:
-            return
-        confirm = simpledialog.askstring('Change Password', 'Confirm new password:', show='*', parent=self)
-        if new != confirm:
-            messagebox.showerror('Error', 'Passwords do not match.')
-            return
-        set_password(new)
-        messagebox.showinfo('Done', 'Password changed.')
+        w = tk.Toplevel(self)
+        w.title('Change Password')
+        w.transient(self)
+        w.grab_set()
+        f = ttk.Frame(w, padding=18)
+        f.pack(fill='both', expand=True)
 
-def login():
-    root = tk.Tk()
-    root.withdraw()
-    if not has_password():
-        while True:
-            p = simpledialog.askstring(APP_NAME, 'Create a password for this app:', show='*', parent=root)
-            if p is None:
-                root.destroy()
-                return False
-            if not p.strip():
-                messagebox.showwarning('Required', 'Password cannot be blank.', parent=root)
-                continue
-            q = simpledialog.askstring(APP_NAME, 'Confirm password:', show='*', parent=root)
-            if q is None:
-                root.destroy()
-                return False
-            if p == q:
-                set_password(p)
-                break
-            messagebox.showerror('Error', 'Passwords do not match.', parent=root)
-    else:
-        for _ in range(3):
-            p = simpledialog.askstring(APP_NAME, 'Enter your password:', show='*', parent=root)
-            if p is None:
-                root.destroy()
-                return False
-            if verify_password(p):
-                root.destroy()
-                return True
-            messagebox.showerror('Login failed', 'Incorrect password.', parent=root)
-        root.destroy()
-        return False
-    root.destroy()
-    return True
+        ttk.Label(f, text='Current Password:').grid(row=0, column=0, sticky='w', pady=5)
+        old_v = ttk.Entry(f, show='*', width=30)
+        old_v.grid(row=0, column=1, pady=5)
+
+        ttk.Label(f, text='New Password:').grid(row=1, column=0, sticky='w', pady=5)
+        new_v = ttk.Entry(f, show='*', width=30)
+        new_v.grid(row=1, column=1, pady=5)
+
+        ttk.Label(f, text='Confirm New:').grid(row=2, column=0, sticky='w', pady=5)
+        conf_v = ttk.Entry(f, show='*', width=30)
+        conf_v.grid(row=2, column=1, pady=5)
+
+        def save():
+            if not verify_password(old_v.get()):
+                messagebox.showerror('Error', 'Current password incorrect.', parent=w)
+                return
+            if not new_v.get():
+                messagebox.showwarning('Required', 'New password cannot be empty.', parent=w)
+                return
+            if new_v.get() != conf_v.get():
+                messagebox.showerror('Error', 'New passwords do not match.', parent=w)
+                return
+            set_password(new_v.get())
+            messagebox.showinfo('Done', 'Password changed successfully.', parent=w)
+            w.destroy()
+
+        ttk.Button(f, text='Update Password', command=save).grid(row=3, column=1, sticky='e', pady=10)
+        w.wait_window()
 
 if __name__ == '__main__':
     init_db()
-    if login():
-        App().mainloop()
+    app = App()
+    app.mainloop()
