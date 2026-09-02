@@ -165,14 +165,27 @@ def login():
     if not has_password():
         while True:
             p=simpledialog.askstring(APP_NAME,'Create a password for this app:',show='*',parent=root)
-            if not p:root.destroy();return False
-            q=simpledialog.askstring(APP_NAME,'Confirm password:',show='*',parent=root)
-            if p==q:set_password(p);break
-            messagebox.showerror('Error','Passwords do not match.',parent=root)
+            if p is None: # User explicitly hit "Cancle"
+                root.destroy()
+                return False
+            if not p.strip(): # User hit OK with blank text
+                messagebox.showwarning('Required', 'Password cannot be blank.', parent=root)
+                continue
+            q = simpledialogue.askstring(APP_NAME, 'Confirm password:', show='*', parent=root)
+            if p==q:
+                set_password(p)
+                break
+           messagebox.showerror('Error', 'Passwords do not match.', parent=root)     
+        
     else:
         for _ in range(3):
             p=simpledialog.askstring(APP_NAME,'Enter your password:',show='*',parent=root)
-            if p and verify_password(p):root.destroy();return True
+            if p is None:
+                root.destroy()
+                return False
+            if verify_password(p):
+                root.destroy()
+                return True
             messagebox.showerror('Login failed','Incorrect password.',parent=root)
         root.destroy();return False
     root.destroy();return True
